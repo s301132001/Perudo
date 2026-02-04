@@ -13,15 +13,6 @@ export const Dice: React.FC<DiceProps> = ({ value, size = 'md', hidden = false }
     lg: 'w-16 h-16 text-4xl',
   };
 
-  const dotPosition = {
-    1: ['justify-center items-center'],
-    2: ['justify-start items-start', 'justify-end items-end'],
-    3: ['justify-start items-start', 'justify-center items-center', 'justify-end items-end'],
-    4: ['justify-start items-start', 'justify-end items-start', 'justify-start items-end', 'justify-end items-end'],
-    5: ['justify-start items-start', 'justify-end items-start', 'justify-center items-center', 'justify-start items-end', 'justify-end items-end'],
-    6: ['justify-start items-start', 'justify-end items-start', 'justify-start items-center', 'justify-end items-center', 'justify-start items-end', 'justify-end items-end'],
-  };
-
   if (hidden) {
     return (
       <div className={`${sizeClasses[size]} bg-slate-700 rounded-lg shadow-md flex items-center justify-center border-2 border-slate-600`}>

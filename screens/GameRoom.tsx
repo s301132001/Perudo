@@ -81,7 +81,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
     const peer = new Peer(peerId);
     peerRef.current = peer;
 
-    peer.on('open', (id: string) => {
+    peer.on('open', () => {
       addLog(`房間已建立，代碼：${settings.roomId}。等待玩家加入...`);
     });
 
@@ -91,7 +91,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
       });
 
       conn.on('data', (data: NetworkAction) => {
-        handleNetworkAction(data, conn);
+        handleNetworkAction(data);
       });
 
       conn.on('close', () => {
@@ -144,12 +144,12 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
         }
       });
       
-      conn.on('error', (e: any) => addLog('連線失敗', 'error'));
+      conn.on('error', () => addLog('連線失敗', 'error'));
     });
   };
 
   // --- Host Logic: Handle Network Actions ---
-  const handleNetworkAction = (action: NetworkAction, senderConn?: any) => {
+  const handleNetworkAction = (action: NetworkAction) => {
     if (!settings.isHost) return;
 
     switch (action.type) {
@@ -524,12 +524,6 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
   
   // Calculate relative rendering for Poker table
   // Always put "Me" at bottom center
-  const myPlayerIndex = players.findIndex(p => p.id === myId);
-  const rotatedPlayers = [...players];
-  if (myPlayerIndex !== -1) {
-      // Rotate array so I am at index 0 (rendering logic handles rest)
-      // Actually, simple filter is easier for this layout
-  }
   const me = players.find(p => p.id === myId);
   const opponents = players.filter(p => p.id !== myId);
 

@@ -1,0 +1,1 @@
+{"root":["./constants.ts","./types.ts","./vite.config.ts","./services/geminiservice.ts","./utils/gameutils.ts","./app.tsx","./index.tsx","./components/button.tsx","./components/dice.tsx","./screens/gameroom.tsx","./screens/lobby.tsx"],"version":"5.9.3"}
