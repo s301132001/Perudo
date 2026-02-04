@@ -170,7 +170,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
           name: initialSettings.playerName,
           isAi: false,
           dice: [],
-          diceCount: initialSettings.startingDice,
+          diceCount: initialSettings.startingDice, // This will be overwritten by Host with correct setting
           isEliminated: false,
           avatarSeed: Math.floor(Math.random() * 100)
         };
@@ -214,12 +214,15 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         
         // Allow Reconnection if player exists, otherwise only join in Lobby
         if (currentState.phase !== GamePhase.LOBBY && !existingPlayer) {
+            // OPTIONAL: Send a "Reject" or ignore. 
+            // Currently ignoring means guest stays in "Waiting" which confuses them.
+            // But we can't easily send private message back without refactoring sync.
+            // The guest will detect they are missing from player list in syncState.
             return; 
         }
 
         if (existingPlayer) {
             // Reconnection logic: Just sync them up.
-            // We might want to update their name if they changed it, but ID matches.
             broadcastState(); 
         } else {
             const newPlayer = action.player;
@@ -643,6 +646,9 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   // Always put "Me" at bottom center
   const me = players.find(p => p.id === myId);
   const opponents = players.filter(p => p.id !== myId);
+  
+  // Check if I am spectating (not in players list but connected)
+  const isSpectating = !me && phase === GamePhase.PLAYING;
 
   // Helper to check if I can see dice
   const canSeeDice = (p: Player) => {
@@ -653,6 +659,22 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
       }
       return false;
   };
+
+  if (isSpectating) {
+      return (
+          <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
+               <div className="bg-slate-800 p-8 rounded-2xl border border-rose-900/50 text-center max-w-md">
+                   <div className="text-4xl mb-4">🚫</div>
+                   <h2 className="text-xl font-bold text-white mb-2">無法加入遊戲</h2>
+                   <p className="text-slate-400 mb-6">
+                       遊戲已經開始，且您不在玩家清單中。
+                       <br/>可能是您使用了新的瀏覽器分頁，或室長未將您加入。
+                   </p>
+                   <Button onClick={onLeave}>返回大廳</Button>
+               </div>
+          </div>
+      );
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 text-white flex flex-col overflow-hidden font-sans">
@@ -672,7 +694,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                         key={p.id} 
                         className={`
                             relative flex flex-col items-center p-3 rounded-xl transition-all duration-300 min-w-[120px]
-                            ${activePlayer?.id === p.id ? 'bg-indigo-900/40 ring-2 ring-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.3)]' : 'bg-slate-800/50'}
+                            ${activePlayer?.id === p.id ? 'bg-indigo-900/40 ring-2 ring-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.3)] scale-105' : 'bg-slate-800/50'}
                             ${p.isEliminated ? 'opacity-30 grayscale' : ''}
                         `}
                     >
@@ -825,7 +847,8 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                                  </div>
                              ) : (
                                  <div className="flex items-center justify-center h-full">
-                                     <div className="text-slate-400 animate-pulse font-mono">
+                                     <div className="text-slate-400 animate-pulse font-mono flex items-center gap-2">
+                                         {isAiThinking && <span className="animate-spin text-xl">⏳</span>}
                                          {isAiThinking ? "AI 正在思考..." : `等待 ${activePlayer?.name} 行動...`}
                                      </div>
                                  </div>

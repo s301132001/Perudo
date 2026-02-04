@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { GameSettings } from '../types';
 import { MAX_PLAYERS, MIN_PLAYERS, DEFAULT_STARTING_DICE } from '../constants';
@@ -123,16 +124,20 @@ export const Lobby: React.FC<LobbyProps> = ({ onStartGame }) => {
              />
           </div>
 
-          <div className="border-t border-slate-700 my-4 pt-4">
-              <p className="text-xs font-bold text-slate-500 mb-4 uppercase tracking-wider">
-                  遊戲設定 {isGuest && '(由室長決定)'}
+          <div className="border-t border-slate-700 my-4 pt-4 relative">
+              <p className="text-xs font-bold text-slate-500 mb-4 uppercase tracking-wider flex justify-between">
+                  <span>遊戲設定</span>
+                  {isGuest && <span className="text-indigo-400 animate-pulse">由室長決定</span>}
               </p>
+              
+              {/* Guest Overlay blocker */}
+              {isGuest && <div className="absolute inset-0 top-10 bg-slate-900/40 z-10 cursor-not-allowed backdrop-blur-[1px] rounded-lg border border-white/5"></div>}
 
               {/* Player Count */}
-              <div className={`space-y-2 mb-4 transition-opacity ${isGuest ? 'opacity-60 pointer-events-none' : ''}`}>
+              <div className={`space-y-2 mb-4 transition-opacity ${isGuest ? 'opacity-50' : ''}`}>
                 <div className="flex justify-between text-sm text-slate-300">
                    <span>玩家總數 (含 AI)</span>
-                   <span className="font-bold text-indigo-400">{playerCount} 人</span>
+                   <span className="font-bold text-indigo-400">{isGuest ? '?' : playerCount} 人</span>
                 </div>
                 <input 
                   type="range" 
@@ -146,10 +151,10 @@ export const Lobby: React.FC<LobbyProps> = ({ onStartGame }) => {
               </div>
 
               {/* Dice Count */}
-              <div className={`space-y-2 mb-4 transition-opacity ${isGuest ? 'opacity-60 pointer-events-none' : ''}`}>
+              <div className={`space-y-2 mb-4 transition-opacity ${isGuest ? 'opacity-50' : ''}`}>
                  <div className="flex justify-between text-sm text-slate-300">
                    <span>每人起始骰子數</span>
-                   <span className="font-bold text-indigo-400">{diceCount} 顆</span>
+                   <span className="font-bold text-indigo-400">{isGuest ? '?' : diceCount} 顆</span>
                 </div>
                 <input 
                   type="range" 
@@ -163,7 +168,7 @@ export const Lobby: React.FC<LobbyProps> = ({ onStartGame }) => {
               </div>
 
               {/* Difficulty */}
-              <div className={`space-y-2 transition-opacity ${isGuest ? 'opacity-60 pointer-events-none' : ''}`}>
+              <div className={`space-y-2 transition-opacity ${isGuest ? 'opacity-50' : ''}`}>
                 <label className="block text-sm font-medium text-slate-300">AI 難度</label>
                 <div className="grid grid-cols-2 gap-2">
                   <button 
