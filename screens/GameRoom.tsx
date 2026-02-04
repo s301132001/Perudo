@@ -304,8 +304,10 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   };
 
   const startMultiplayerGame = () => {
-    let currentPlayers = [...players];
-    const humansCount = currentPlayers.length;
+    // Filter out existing bots to prevent duplication if restarting from lobby
+    const humans = players.filter(p => !p.isAi);
+    let currentPlayers = [...humans];
+    const humansCount = humans.length;
     const needed = settingsState.playerCount - humansCount;
     const diceStart = settingsState.gameMode === 'hearts' ? DEFAULT_STARTING_DICE : settingsState.startingDice;
     
@@ -324,6 +326,51 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     }
     setPlayers(currentPlayers);
     startNewRound(currentPlayers, 0);
+  };
+
+  // New: Restart Game Directly (Host Only)
+  const handleRestartGame = () => {
+    if (!settingsState.isHost) return;
+
+    // Reset all current players (including bots) to initial state
+    const resetPlayers = players.map(p => ({
+        ...p,
+        dice: [],
+        diceCount: settingsState.gameMode === 'hearts' ? DEFAULT_STARTING_DICE : settingsState.startingDice,
+        health: settingsState.maxHealth,
+        isEliminated: false
+    }));
+
+    setPlayers(resetPlayers);
+    startNewRound(resetPlayers, 0);
+    
+    const restartLog: GameLog = { id: Date.now().toString(), message: '--- 遊戲重新開始 ---', type: 'info' };
+    setLogs([restartLog]);
+    
+    // Broadcast the full reset state
+    broadcastState({
+        players: resetPlayers,
+        logs: [restartLog]
+    });
+  };
+
+  // New: Back to Room Lobby (Host Only)
+  const handleBackToRoom = () => {
+      if (!settingsState.isHost) return;
+      
+      // Remove bots when returning to lobby
+      const humansOnly = players.filter(p => !p.isAi);
+      setPlayers(humansOnly);
+      setPhase(GamePhase.LOBBY);
+      setLogs([]);
+
+      broadcastState({
+          players: humansOnly,
+          phase: GamePhase.LOBBY,
+          logs: [],
+          roundWinner: null,
+          finalLoser: null
+      });
   };
 
   const startNewRound = (currentPlayers: Player[], startPlayerIndex: number) => {
@@ -737,9 +784,9 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                         
                         {/* Status (Hearts or Dice) */}
                         {settingsState.gameMode === 'hearts' ? (
-                            <div className="flex gap-0.5 mb-1">
-                                {Array.from({length: p.maxHealth}).map((_, i) => (
-                                    <span key={i} className={`text-xs ${i < p.health ? 'text-rose-500' : 'text-slate-700'}`}>❤️</span>
+                            <div className="flex gap-0.5 mb-1 h-4">
+                                {Array.from({length: Math.max(0, p.health)}).map((_, i) => (
+                                    <span key={i} className="text-xs text-rose-500 drop-shadow-sm">❤️</span>
                                 ))}
                             </div>
                         ) : null}
@@ -858,8 +905,8 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                                  你的手牌 ({me.name})
                                  {settingsState.gameMode === 'hearts' && (
                                      <div className="flex gap-0.5 ml-2">
-                                        {Array.from({length: me.maxHealth}).map((_, i) => (
-                                            <span key={i} className={`text-sm ${i < me.health ? 'text-rose-500' : 'text-slate-700'}`}>❤️</span>
+                                        {Array.from({length: Math.max(0, me.health)}).map((_, i) => (
+                                            <span key={i} className="text-sm text-rose-500 drop-shadow-sm">❤️</span>
                                         ))}
                                      </div>
                                  )}
@@ -973,7 +1020,27 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                            <p className="text-4xl font-bold text-rose-200">{finalLoser}</p>
                       </div>
 
-                      <Button onClick={onLeave} className="w-full py-4 text-xl font-bold">返回大廳</Button>
+                      {/* Host Actions */}
+                      {settingsState.isHost ? (
+                          <div className="flex flex-col gap-3">
+                              <Button onClick={handleRestartGame} className="w-full py-4 text-xl font-bold bg-indigo-600 hover:bg-indigo-500">
+                                  再玩一局 (Restart)
+                              </Button>
+                              <div className="flex gap-2">
+                                  <Button onClick={handleBackToRoom} variant="secondary" className="flex-1">
+                                      回到房間
+                                  </Button>
+                                  <Button onClick={onLeave} variant="ghost" className="flex-1 text-slate-400">
+                                      完全離開
+                                  </Button>
+                              </div>
+                          </div>
+                      ) : (
+                          <div>
+                             <p className="text-slate-400 animate-pulse mb-4">等待室長決定下一局...</p>
+                             <Button onClick={onLeave} variant="secondary" className="w-full">離開房間</Button>
+                          </div>
+                      )}
                   </div>
               </div>
             )}
