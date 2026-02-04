@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { GameSettings, Player, Bid, GamePhase, GameLog, AiMove, NetworkAction, GameState } from '../types';
-import { rollDice, isValidBid, countDice } from '../utils/gameUtils';
+import { rollDice, isValidBid, countDice, getShareUrl } from '../utils/gameUtils';
 import { getAiMove } from '../services/geminiService';
 import { Dice } from '../components/Dice';
 import { Button } from '../components/Button';
@@ -55,6 +55,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   const [selectedFace, setSelectedFace] = useState(2);
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [myId, setMyId] = useState<string>(initialSettings.isHost ? 'host' : 'guest-temp');
+  const [isCopied, setIsCopied] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // --- Networking Refs ---
@@ -562,6 +563,13 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
       startNewRound(updatedPlayers, nextStarterIdx);
   };
 
+  const handleCopy = () => {
+    if (!settingsState.roomId) return;
+    const url = getShareUrl(settingsState.roomId);
+    navigator.clipboard.writeText(url);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
 
   // ==========================================
   // RENDER UI
@@ -575,6 +583,19 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                   <h2 className="text-2xl font-bold mb-6 text-center text-indigo-400">
                       {settingsState.isHost ? '等待玩家加入...' : '已加入房間，等待室長開始'}
                   </h2>
+
+                  {/* Host: Show Room ID and Copy Button */}
+                  {settingsState.isHost && (
+                    <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-600 mb-6 flex items-center justify-between">
+                        <div>
+                            <p className="text-xs text-slate-400 uppercase tracking-wider font-bold mb-1">房間代碼</p>
+                            <p className="text-xl font-mono text-indigo-300 tracking-widest">{settingsState.roomId}</p>
+                        </div>
+                        <Button variant="secondary" onClick={handleCopy} className="text-xs py-1 h-9 min-w-[80px]">
+                            {isCopied ? '已複製' : '複製'}
+                        </Button>
+                    </div>
+                  )}
                   
                   <div className="space-y-4 mb-8">
                       {players.map(p => (

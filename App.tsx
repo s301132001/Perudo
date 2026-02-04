@@ -19,12 +19,17 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="antialiased text-slate-100 selection:bg-indigo-500 selection:text-white">
+    <div className="antialiased text-slate-100 selection:bg-indigo-500 selection:text-white relative">
       {!isPlaying ? (
         <Lobby onStartGame={handleStartGame} />
       ) : (
         settings && <GameRoom settings={settings} onLeave={handleLeaveGame} />
       )}
+      
+      {/* Version Footer */}
+      <div className="fixed bottom-1 right-2 text-[10px] text-slate-600 font-mono pointer-events-none z-50 opacity-60">
+        v1.0.0
+      </div>
     </div>
   );
 };
