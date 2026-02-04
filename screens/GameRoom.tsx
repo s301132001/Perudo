@@ -59,6 +59,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   const [isCopied, setIsCopied] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [activeEmotes, setActiveEmotes] = useState<Record<string, string>>({}); // playerId -> emoji
+  const [chatMessage, setChatMessage] = useState(''); // NEW: Chat Input State
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // --- Networking Refs ---
@@ -227,6 +228,18 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
             }
         });
         break;
+      case 'CHAT': {
+        const sender = currentState.players.find(p => p.id === action.playerId);
+        const chatLog = {
+           id: Date.now().toString(),
+           message: `${sender?.name || 'Unknown'}: ${action.message}`,
+           type: 'chat' as const
+        };
+        const newLogs = [...currentState.logs, chatLog];
+        setLogs(newLogs);
+        broadcastState({ logs: newLogs });
+        break;
+      }
     }
   };
 
@@ -443,6 +456,29 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
               return newState;
           });
       }, 3000);
+  };
+
+  // --- Chat System ---
+  const handleSendChat = () => {
+    if (!chatMessage.trim()) return;
+    const msg = chatMessage.trim();
+    setChatMessage('');
+
+    if (settingsState.isHost) {
+        // Host: Update local state and broadcast
+        const me = players.find(p => p.id === myId);
+        const newLog: GameLog = { 
+            id: Date.now().toString(), 
+            message: `${me?.name || 'Host'}: ${msg}`, 
+            type: 'chat' 
+        };
+        const newLogs = [...logs, newLog];
+        setLogs(newLogs);
+        broadcastState({ logs: newLogs });
+    } else {
+        // Guest: Send to Host
+        hostConnectionRef.current?.send({ type: 'CHAT', playerId: myId, message: msg });
+    }
   };
 
   // --- AI Logic Hook ---
@@ -728,10 +764,9 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
 
   const canSeeDice = (p: Player) => {
       if (phase === GamePhase.GAME_OVER) return true;
+      if (phase === GamePhase.ROUND_END) return true; // Show all dice during reveal
       if (p.id === myId) return true;
-      if (phase === GamePhase.ROUND_END && (challengeResult?.loserId === p.id || challengeResult?.bid.playerId === p.id)) {
-        return true; 
-      }
+      if (me?.isEliminated) return true; // Eliminated players can see everything (Observer mode)
       return false;
   };
 
@@ -840,21 +875,38 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                  </div>
             </div>
 
-            {/* Logs Area */}
-            <div className="absolute left-4 bottom-32 w-64 h-48 pointer-events-none hidden md:block">
-                 <div className="h-full overflow-y-auto flex flex-col justify-end text-sm space-y-1 mask-linear-gradient" ref={logsEndRef}>
-                     {logs.slice(-6).map(log => (
+            {/* Logs Area & Chat Input - Bottom Left */}
+            <div className="absolute left-4 bottom-24 w-72 flex flex-col gap-2 z-30 hidden md:flex">
+                 {/* Logs */}
+                 <div className="h-48 overflow-y-auto flex flex-col justify-end text-sm space-y-1 mask-linear-gradient" ref={logsEndRef}>
+                     {logs.slice(-8).map(log => (
                          <div key={log.id} className={`
-                            px-3 py-1.5 rounded bg-black/40 backdrop-blur-md border-l-2 mb-1
-                            ${log.type === 'bid' ? 'border-indigo-400 text-indigo-100' : ''}
-                            ${log.type === 'challenge' ? 'border-rose-500 text-rose-100' : ''}
-                            ${log.type === 'info' ? 'border-slate-500 text-slate-300' : ''}
-                            ${log.type === 'error' ? 'border-red-500 text-red-300' : ''}
-                            ${log.type === 'win' ? 'border-yellow-500 text-yellow-300' : ''}
+                            px-3 py-1.5 rounded backdrop-blur-md border-l-2 mb-1 shadow-sm break-words
+                            ${log.type === 'bid' ? 'bg-black/40 border-indigo-400 text-indigo-100' : ''}
+                            ${log.type === 'challenge' ? 'bg-black/40 border-rose-500 text-rose-100' : ''}
+                            ${log.type === 'info' ? 'bg-black/20 border-slate-500 text-slate-300' : ''}
+                            ${log.type === 'error' ? 'bg-black/40 border-red-500 text-red-300' : ''}
+                            ${log.type === 'win' ? 'bg-black/40 border-yellow-500 text-yellow-300' : ''}
+                            ${log.type === 'chat' ? 'bg-slate-800/80 border-white/50 text-white' : ''}
                          `}>
                              {log.message}
                          </div>
                      ))}
+                 </div>
+                 
+                 {/* Chat Input */}
+                 <div className="flex gap-2">
+                    <input 
+                      type="text"
+                      value={chatMessage}
+                      onChange={(e) => setChatMessage(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
+                      placeholder="輸入訊息..."
+                      className="flex-1 bg-slate-800/80 border border-slate-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500 placeholder-slate-500"
+                    />
+                    <Button variant="secondary" onClick={handleSendChat} className="px-3 py-1.5 text-xs h-auto">
+                        送出
+                    </Button>
                  </div>
             </div>
             
@@ -977,10 +1029,16 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                                  </div>
                              ) : (
                                  <div className="flex items-center justify-center h-full">
-                                     <div className="text-slate-400 animate-pulse font-mono flex items-center gap-2">
-                                         {isAiThinking && <span className="animate-spin text-xl">⏳</span>}
-                                         {isAiThinking ? "AI 正在思考..." : `等待 ${activePlayer?.name} 行動...`}
-                                     </div>
+                                    {me.isEliminated ? (
+                                        <div className="text-rose-400 font-bold animate-pulse">
+                                            您已淘汰，目前為觀察者模式 (可查看所有手牌)
+                                        </div>
+                                    ) : (
+                                        <div className="text-slate-400 animate-pulse font-mono flex items-center gap-2">
+                                            {isAiThinking && <span className="animate-spin text-xl">⏳</span>}
+                                            {isAiThinking ? "AI 正在思考..." : `等待 ${activePlayer?.name} 行動...`}
+                                        </div>
+                                    )}
                                  </div>
                              )}
                          </div>

@@ -30,7 +30,7 @@ export interface Bid {
 export interface GameLog {
   id: string;
   message: string;
-  type: 'info' | 'bid' | 'challenge' | 'error' | 'win' | 'emote';
+  type: 'info' | 'bid' | 'challenge' | 'error' | 'win' | 'emote' | 'chat';
 }
 
 export interface GameSettings {
@@ -61,6 +61,7 @@ export type NetworkAction =
   | { type: 'BID'; quantity: number; face: number }
   | { type: 'CHALLENGE' }
   | { type: 'EMOTE'; playerId: string; emoji: string } // NEW
+  | { type: 'CHAT'; playerId: string; message: string } // NEW
   | { type: 'RESTART' };
 
 export interface GameState {
