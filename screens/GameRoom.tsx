@@ -112,6 +112,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
 
     peer.on('connection', (conn: any) => {
       conn.on('open', () => {
+        console.log('Host: New connection received');
         connectionsRef.current.push(conn);
         // Immediately sync current settings to the new guest
         // We use setTimeout to ensure connection is fully ready
@@ -208,16 +209,14 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     const currentState = gameStateRef.current;
     if (!currentState.settings.isHost) return;
 
+    console.log('Host: Received action', action);
+
     switch (action.type) {
       case 'JOIN':
         const existingPlayer = currentState.players.find(p => p.id === action.player.id);
         
         // Allow Reconnection if player exists, otherwise only join in Lobby
         if (currentState.phase !== GamePhase.LOBBY && !existingPlayer) {
-            // OPTIONAL: Send a "Reject" or ignore. 
-            // Currently ignoring means guest stays in "Waiting" which confuses them.
-            // But we can't easily send private message back without refactoring sync.
-            // The guest will detect they are missing from player list in syncState.
             return; 
         }
 
@@ -231,8 +230,6 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
             
             const updatedPlayers = [...currentState.players, newPlayer];
             setPlayers(updatedPlayers);
-            // We need to update the log immediately in state for the broadcast to pick it up? 
-            // Better to just invoke broadcast with the new values.
             const joinLog = {id: Date.now().toString(), message: `${newPlayer.name} 加入了房間`, type: 'info' as const};
             setLogs(prev => [...prev, joinLog]);
             
@@ -243,10 +240,18 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         }
         break;
       case 'BID':
-        // Use current state to determine whose turn it is
+        // Safe check for valid player index
+        if (!currentState.players[currentState.currentPlayerIndex]) {
+            console.error('Host Error: Invalid current player index');
+            return;
+        }
         submitBid(currentState.players[currentState.currentPlayerIndex].id, action.quantity, action.face);
         break;
       case 'CHALLENGE':
+        if (!currentState.players[currentState.currentPlayerIndex]) {
+            console.error('Host Error: Invalid current player index');
+            return;
+        }
         handleChallenge(currentState.players[currentState.currentPlayerIndex].id);
         break;
     }
@@ -280,6 +285,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
 
   // --- Guest Logic: Sync State ---
   const syncState = (newState: Partial<GameState>) => {
+    console.log('Guest: Syncing state', newState);
     if (newState.players) setPlayers(newState.players);
     if (newState.currentPlayerIndex !== undefined) setCurrentPlayerIndex(newState.currentPlayerIndex);
     if (newState.currentBid !== undefined) setCurrentBid(newState.currentBid);
@@ -289,7 +295,15 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     if (newState.totalDiceInGame !== undefined) setTotalDiceInGame(newState.totalDiceInGame);
     if (newState.roundWinner !== undefined) setRoundWinner(newState.roundWinner);
     if (newState.challengeResult !== undefined) setChallengeResult(newState.challengeResult);
-    if (newState.settings) setSettingsState(newState.settings); // Sync Settings
+    
+    // CRITICAL FIX: Ensure we do NOT overwrite local 'isHost' status with the Host's 'isHost' status
+    if (newState.settings) {
+        setSettingsState(prev => ({
+            ...newState.settings!,
+            isHost: prev.isHost, // Preserve local host status
+            mode: prev.mode // Preserve local mode (though usually same)
+        }));
+    }
   };
 
   // ==========================================
@@ -434,9 +448,12 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   const submitBid = (playerId: string, quantity: number, face: number) => {
     // Only Host updates state
     if (!settingsState.isHost) {
+        console.log('Guest: Sending Bid', { quantity, face });
         hostConnectionRef.current?.send({ type: 'BID', quantity, face });
         return;
     }
+
+    console.log('Host: Processing Bid', { playerId, quantity, face });
 
     // Always read from Ref in logic functions
     const current = gameStateRef.current;
@@ -481,9 +498,12 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
 
   const handleChallenge = (challengerId: string) => {
     if (!settingsState.isHost) {
+        console.log('Guest: Sending Challenge');
         hostConnectionRef.current?.send({ type: 'CHALLENGE' });
         return;
     }
+
+    console.log('Host: Processing Challenge', { challengerId });
 
     const current = gameStateRef.current;
     if (!current.currentBid) return;
