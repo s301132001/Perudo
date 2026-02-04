@@ -5,7 +5,7 @@ import { rollDice, isValidBid, countDice, getShareUrl } from '../utils/gameUtils
 import { getAiMove } from '../services/geminiService';
 import { Dice } from '../components/Dice';
 import { Button } from '../components/Button';
-import { AVATAR_COLORS, DICE_LABELS, DICE_FACES } from '../constants';
+import { AVATAR_COLORS, DICE_LABELS, DICE_FACES, EMOJI_LIST, DEFAULT_STARTING_DICE } from '../constants';
 
 // Declare PeerJS globally
 declare const Peer: any;
@@ -26,10 +26,10 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   const [phase, setPhase] = useState<GamePhase>(GamePhase.LOBBY);
   const [totalDiceInGame, setTotalDiceInGame] = useState(0);
   const [roundWinner, setRoundWinner] = useState<string | null>(null);
+  const [finalLoser, setFinalLoser] = useState<string | null>(null); // Track the loser
   const [challengeResult, setChallengeResult] = useState<{loserId: string, actualCount: number, bid: Bid} | null>(null);
 
   // --- State Ref Pattern (Fix for Stale Closures in PeerJS) ---
-  // This ref always holds the latest state, accessible inside event listeners
   const gameStateRef = useRef<GameState>({
     players: [],
     currentPlayerIndex: 0,
@@ -39,6 +39,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     phase: GamePhase.LOBBY,
     totalDiceInGame: 0,
     roundWinner: null,
+    finalLoser: null,
     challengeResult: null,
     settings: initialSettings
   });
@@ -46,9 +47,9 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   // Sync state to ref whenever it changes
   useEffect(() => {
     gameStateRef.current = {
-      players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, challengeResult, settings: settingsState
+      players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, finalLoser, challengeResult, settings: settingsState
     };
-  }, [players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, challengeResult, settingsState]);
+  }, [players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, finalLoser, challengeResult, settingsState]);
 
   // --- Local UI State ---
   const [selectedQuantity, setSelectedQuantity] = useState(1);
@@ -56,25 +57,28 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [myId, setMyId] = useState<string>(initialSettings.isHost ? 'host' : 'guest-temp');
   const [isCopied, setIsCopied] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [activeEmotes, setActiveEmotes] = useState<Record<string, string>>({}); // playerId -> emoji
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // --- Networking Refs ---
   const peerRef = useRef<any>(null);
-  const connectionsRef = useRef<any[]>([]); // For Host: list of guest connections
-  const hostConnectionRef = useRef<any>(null); // For Guest: connection to host
+  const connectionsRef = useRef<any[]>([]); 
+  const hostConnectionRef = useRef<any>(null);
 
   // ==========================================
   // Initialization & Networking
   // ==========================================
   useEffect(() => {
-    // 1. Initialize Player List (Locally for Host first)
     if (initialSettings.isHost) {
       const initialPlayer: Player = {
-        id: 'host', // Host always has ID 'host' internally
+        id: 'host', 
         name: initialSettings.playerName,
         isAi: false,
         dice: [],
-        diceCount: initialSettings.startingDice,
+        diceCount: initialSettings.gameMode === 'hearts' ? DEFAULT_STARTING_DICE : initialSettings.startingDice,
+        health: initialSettings.maxHealth,
+        maxHealth: initialSettings.maxHealth,
         isEliminated: false,
         avatarSeed: 0,
         isHost: true
@@ -83,14 +87,11 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
       setMyId('host');
       
       if (initialSettings.mode === 'single') {
-        // Single Player: Fill with AI immediately and start
         initSinglePlayerGame(initialPlayer);
       } else {
-        // Multiplayer Host: Init Peer and Wait
         initHostPeer();
       }
     } else {
-      // Multiplayer Guest: Init Peer and Connect
       initGuestPeer();
     }
 
@@ -112,10 +113,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
 
     peer.on('connection', (conn: any) => {
       conn.on('open', () => {
-        console.log('Host: New connection received');
         connectionsRef.current.push(conn);
-        // Immediately sync current settings to the new guest
-        // We use setTimeout to ensure connection is fully ready
         setTimeout(() => broadcastState(), 500);
       });
 
@@ -129,33 +127,26 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     });
 
     peer.on('error', (err: any) => {
-      console.error(err);
-      if (err.type === 'unavailable-id') {
-         addLog('房間 ID 衝突或尚未清理，請稍後再試或重新整理', 'error');
-      } else {
-         addLog(`連線錯誤: ${err.type}`, 'error');
-      }
+       if (err.type === 'unavailable-id') {
+         addLog('房間 ID 衝突，請重新整理', 'error');
+       }
     });
   };
 
   // --- Guest Logic: Init Peer ---
   const initGuestPeer = () => {
-    // Attempt to recover previous session ID for reconnection
     const savedId = sessionStorage.getItem('gemini-liar-guest-id');
-    
-    // If we have a savedId, try to use it. If not, PeerJS generates one.
     let peer: any;
     try {
         peer = savedId ? new Peer(savedId) : new Peer();
     } catch(e) {
         peer = new Peer();
     }
-
     peerRef.current = peer;
 
     peer.on('open', (id: string) => {
       setMyId(id);
-      sessionStorage.setItem('gemini-liar-guest-id', id); // Persist ID
+      sessionStorage.setItem('gemini-liar-guest-id', id);
       
       addLog('正在連線至房間...');
       const hostId = `gemini-liar-${initialSettings.roomId}`;
@@ -163,15 +154,16 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
       
       conn.on('open', () => {
         hostConnectionRef.current = conn;
-        addLog('已連線！等待室長開始遊戲。');
+        addLog('已連線！');
         
-        // Send Join Request
         const me: Player = {
           id: id,
           name: initialSettings.playerName,
           isAi: false,
           dice: [],
-          diceCount: initialSettings.startingDice, // This will be overwritten by Host with correct setting
+          diceCount: initialSettings.gameMode === 'hearts' ? DEFAULT_STARTING_DICE : initialSettings.startingDice,
+          health: initialSettings.maxHealth, // Will be overwritten by sync
+          maxHealth: initialSettings.maxHealth,
           isEliminated: false,
           avatarSeed: Math.floor(Math.random() * 100)
         };
@@ -181,52 +173,31 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
       conn.on('data', (data: NetworkAction) => {
         if (data.type === 'SYNC') {
           syncState(data.state);
+        } else if (data.type === 'EMOTE') {
+           displayEmote(data.playerId, data.emoji);
         }
       });
-      
-      conn.on('error', () => addLog('連線失敗', 'error'));
-    });
-
-    peer.on('error', (err: any) => {
-        if (err.type === 'unavailable-id') {
-             // ID taken (maybe tab is still open?), retry with fresh ID
-             sessionStorage.removeItem('gemini-liar-guest-id');
-             peer.destroy();
-             // Simple recursive retry with fresh Peer
-             const newPeer = new Peer();
-             peerRef.current = newPeer;
-             // Re-bind listeners (simplified for brevity, ideally extract setup function)
-             initGuestPeer(); 
-        } else {
-            addLog(`連線錯誤: ${err.type}`, 'error');
-        }
     });
   };
 
   // --- Host Logic: Handle Network Actions ---
   const handleNetworkAction = (action: NetworkAction) => {
-    // CRITICAL: Read from Ref to get latest state
     const currentState = gameStateRef.current;
     if (!currentState.settings.isHost) return;
-
-    console.log('Host: Received action', action);
 
     switch (action.type) {
       case 'JOIN':
         const existingPlayer = currentState.players.find(p => p.id === action.player.id);
-        
-        // Allow Reconnection if player exists, otherwise only join in Lobby
-        if (currentState.phase !== GamePhase.LOBBY && !existingPlayer) {
-            return; 
-        }
+        if (currentState.phase !== GamePhase.LOBBY && !existingPlayer) return;
 
         if (existingPlayer) {
-            // Reconnection logic: Just sync them up.
             broadcastState(); 
         } else {
             const newPlayer = action.player;
-            // Ensure we use the settings from Host for this new player (like start dice)
-            newPlayer.diceCount = currentState.settings.startingDice; 
+            // Force Settings
+            newPlayer.diceCount = currentState.settings.gameMode === 'hearts' ? DEFAULT_STARTING_DICE : currentState.settings.startingDice;
+            newPlayer.health = currentState.settings.maxHealth;
+            newPlayer.maxHealth = currentState.settings.maxHealth;
             
             const updatedPlayers = [...currentState.players, newPlayer];
             setPlayers(updatedPlayers);
@@ -240,24 +211,26 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         }
         break;
       case 'BID':
-        // Safe check for valid player index
-        if (!currentState.players[currentState.currentPlayerIndex]) {
-            console.error('Host Error: Invalid current player index');
-            return;
-        }
+        if (!currentState.players[currentState.currentPlayerIndex]) return;
         submitBid(currentState.players[currentState.currentPlayerIndex].id, action.quantity, action.face);
         break;
       case 'CHALLENGE':
-        if (!currentState.players[currentState.currentPlayerIndex]) {
-            console.error('Host Error: Invalid current player index');
-            return;
-        }
+        if (!currentState.players[currentState.currentPlayerIndex]) return;
         handleChallenge(currentState.players[currentState.currentPlayerIndex].id);
+        break;
+      case 'EMOTE':
+        displayEmote(action.playerId, action.emoji);
+        // Relay emote to others
+        connectionsRef.current.forEach(conn => {
+            if (conn.open && conn.peer !== action.playerId) { // Don't echo back if unnecessary, but PeerJS usually handles own logic separate
+                conn.send({ type: 'EMOTE', playerId: action.playerId, emoji: action.emoji });
+            }
+        });
         break;
     }
   };
 
-  // --- Host Logic: Broadcast State ---
+  // --- Host Logic: Broadcast ---
   const broadcastState = (partialState?: Partial<GameState>) => {
     const currentState = gameStateRef.current;
     if (!currentState.settings.isHost) return;
@@ -271,21 +244,20 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         phase: currentState.phase,
         totalDiceInGame: currentState.totalDiceInGame,
         roundWinner: currentState.roundWinner,
+        finalLoser: currentState.finalLoser,
         challengeResult: currentState.challengeResult,
-        settings: currentState.settings, // Sync settings!
+        settings: currentState.settings,
         ...partialState
     };
 
     const payload = { type: 'SYNC', state: stateToSend };
-    
     connectionsRef.current.forEach(conn => {
       if (conn.open) conn.send(payload);
     });
   };
 
-  // --- Guest Logic: Sync State ---
+  // --- Guest Logic: Sync ---
   const syncState = (newState: Partial<GameState>) => {
-    console.log('Guest: Syncing state', newState);
     if (newState.players) setPlayers(newState.players);
     if (newState.currentPlayerIndex !== undefined) setCurrentPlayerIndex(newState.currentPlayerIndex);
     if (newState.currentBid !== undefined) setCurrentBid(newState.currentBid);
@@ -294,32 +266,35 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     if (newState.phase) setPhase(newState.phase);
     if (newState.totalDiceInGame !== undefined) setTotalDiceInGame(newState.totalDiceInGame);
     if (newState.roundWinner !== undefined) setRoundWinner(newState.roundWinner);
+    if (newState.finalLoser !== undefined) setFinalLoser(newState.finalLoser);
     if (newState.challengeResult !== undefined) setChallengeResult(newState.challengeResult);
     
-    // CRITICAL FIX: Ensure we do NOT overwrite local 'isHost' status with the Host's 'isHost' status
     if (newState.settings) {
         setSettingsState(prev => ({
             ...newState.settings!,
-            isHost: prev.isHost, // Preserve local host status
-            mode: prev.mode // Preserve local mode (though usually same)
+            isHost: prev.isHost,
+            mode: prev.mode
         }));
     }
   };
 
   // ==========================================
-  // Game Logic (Host Only)
+  // Game Logic
   // ==========================================
 
   const initSinglePlayerGame = (humanPlayer: Player) => {
     const newPlayers = [humanPlayer];
-    // Add AI
+    const diceStart = initialSettings.gameMode === 'hearts' ? DEFAULT_STARTING_DICE : initialSettings.startingDice;
+    
     for (let i = 1; i < initialSettings.playerCount; i++) {
       newPlayers.push({
         id: `ai-${i}`,
         name: `Gemini AI ${i}`,
         isAi: true,
         dice: [],
-        diceCount: initialSettings.startingDice,
+        diceCount: diceStart,
+        health: initialSettings.maxHealth,
+        maxHealth: initialSettings.maxHealth,
         isEliminated: false,
         avatarSeed: i
       });
@@ -329,10 +304,10 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   };
 
   const startMultiplayerGame = () => {
-    // Fill remaining spots with AI
     let currentPlayers = [...players];
     const humansCount = currentPlayers.length;
     const needed = settingsState.playerCount - humansCount;
+    const diceStart = settingsState.gameMode === 'hearts' ? DEFAULT_STARTING_DICE : settingsState.startingDice;
     
     for(let i=0; i < needed; i++) {
        currentPlayers.push({
@@ -340,12 +315,13 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         name: `Bot ${i+1}`,
         isAi: true,
         dice: [],
-        diceCount: settingsState.startingDice,
+        diceCount: diceStart,
+        health: settingsState.maxHealth,
+        maxHealth: settingsState.maxHealth,
         isEliminated: false,
         avatarSeed: 50 + i
       });
     }
-    
     setPlayers(currentPlayers);
     startNewRound(currentPlayers, 0);
   };
@@ -353,12 +329,14 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   const startNewRound = (currentPlayers: Player[], startPlayerIndex: number) => {
     const activePlayers = currentPlayers.map(p => ({
       ...p,
+      // Dice count handling: In Classic, diceCount is reduced. In Hearts, diceCount is constant.
+      // But in resolveRound we update the state.diceCount. 
+      // If Hearts mode, diceCount should remain 5 (or whatever default)
       dice: p.isEliminated ? [] : rollDice(p.diceCount)
     }));
     
-    const totalDice = activePlayers.reduce((acc, p) => acc + p.diceCount, 0);
+    const totalDice = activePlayers.reduce((acc, p) => acc + (p.isEliminated ? 0 : p.diceCount), 0);
 
-    // Update Local Host State
     setPlayers(activePlayers);
     setTotalDiceInGame(totalDice);
     setCurrentBid(null);
@@ -366,6 +344,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     setPhase(GamePhase.PLAYING);
     setChallengeResult(null);
     setRoundWinner(null);
+    setFinalLoser(null);
     setSelectedQuantity(1);
     setSelectedFace(2);
 
@@ -378,7 +357,6 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     const newLog: GameLog = { id: Date.now().toString(), message: `新回合開始！場上共有 ${totalDice} 顆骰子。`, type: 'info' };
     setLogs(prev => [...prev, newLog]);
 
-    // Broadcast
     broadcastState({
       players: activePlayers,
       totalDiceInGame: totalDice,
@@ -387,22 +365,49 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
       phase: GamePhase.PLAYING,
       challengeResult: null,
       roundWinner: null,
+      finalLoser: null,
       currentPlayerIndex: nextIndex,
       logs: [...logs, newLog]
     });
   };
 
-  // --- AI Logic Hook (Host Only) ---
+  // --- Emote System ---
+  const sendEmote = (emoji: string) => {
+      displayEmote(myId, emoji); // Show local
+      setShowEmojiPicker(false);
+      
+      if (settingsState.isHost) {
+          // Host sends to everyone else
+           connectionsRef.current.forEach(conn => {
+            if (conn.open) conn.send({ type: 'EMOTE', playerId: myId, emoji });
+          });
+      } else {
+          // Guest sends to host
+          hostConnectionRef.current?.send({ type: 'EMOTE', playerId: myId, emoji });
+      }
+  };
+
+  const displayEmote = (playerId: string, emoji: string) => {
+      setActiveEmotes(prev => ({ ...prev, [playerId]: emoji }));
+      setTimeout(() => {
+          setActiveEmotes(prev => {
+              const newState = { ...prev };
+              delete newState[playerId];
+              return newState;
+          });
+      }, 3000);
+  };
+
+  // --- AI Logic Hook ---
   useEffect(() => {
     if (!settingsState.isHost) return;
     const activePlayer = players[currentPlayerIndex];
     if (phase === GamePhase.PLAYING && activePlayer?.isAi && !isAiThinking) {
       handleAiTurn(activePlayer);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPlayerIndex, phase, players]);
 
-  // Auto-scroll logs
+  // Logs Scroll
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
@@ -414,12 +419,18 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
 
   const handleAiTurn = async (aiPlayer: Player) => {
     setIsAiThinking(true);
-    // Broadcast thinking state? Optional, but we can simulate by holding state
     await new Promise(r => setTimeout(r, 1500));
+    
+    // 10% Chance for AI to emote
+    if (Math.random() < 0.1) {
+        const randomEmote = EMOJI_LIST[Math.floor(Math.random() * EMOJI_LIST.length)];
+        // Host locally displays it, also needs to broadcast if logic requires, but handled by handleNetworkAction logic flow
+        displayEmote(aiPlayer.id, randomEmote);
+        broadcastState(); // Sync isn't strict for emotes, but good to have
+        connectionsRef.current.forEach(conn => conn.send({type: 'EMOTE', playerId: aiPlayer.id, emoji: randomEmote}));
+    }
 
-    // Use Refs inside async callback to ensure latest state
     const current = gameStateRef.current;
-
     try {
       const move: AiMove = await getAiMove(
         aiPlayer,
@@ -433,7 +444,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         if (isValidBid(current.currentBid, move.quantity, move.face)) {
             submitBid(aiPlayer.id, move.quantity, move.face);
         } else {
-           handleChallenge(aiPlayer.id); // Fallback
+           handleChallenge(aiPlayer.id); 
         }
       } else {
         handleChallenge(aiPlayer.id);
@@ -446,18 +457,12 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   };
 
   const submitBid = (playerId: string, quantity: number, face: number) => {
-    // Only Host updates state
     if (!settingsState.isHost) {
-        console.log('Guest: Sending Bid', { quantity, face });
         hostConnectionRef.current?.send({ type: 'BID', quantity, face });
         return;
     }
 
-    console.log('Host: Processing Bid', { playerId, quantity, face });
-
-    // Always read from Ref in logic functions
     const current = gameStateRef.current;
-
     const newBid: Bid = { playerId, quantity, face };
     const player = current.players.find(p => p.id === playerId);
     const newLogs = [...current.logs, { id: Date.now().toString(), message: `${player?.name} 喊叫： ${quantity} 個 ${DICE_LABELS[face]}`, type: 'bid' as const }];
@@ -468,13 +473,11 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         nextIndex = (nextIndex + 1) % current.players.length;
     }
 
-    // Update Local
     setCurrentBid(newBid);
     setBidHistory(newHistory);
     setLogs(newLogs);
     setCurrentPlayerIndex(nextIndex);
 
-    // Broadcast
     broadcastState({
         currentBid: newBid,
         bidHistory: newHistory,
@@ -482,7 +485,6 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         currentPlayerIndex: nextIndex
     });
 
-    // Helper update for Host UI
     if (playerId === 'host') {
         if (quantity >= selectedQuantity) {
             setSelectedQuantity(quantity);
@@ -498,12 +500,9 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
 
   const handleChallenge = (challengerId: string) => {
     if (!settingsState.isHost) {
-        console.log('Guest: Sending Challenge');
         hostConnectionRef.current?.send({ type: 'CHALLENGE' });
         return;
     }
-
-    console.log('Host: Processing Challenge', { challengerId });
 
     const current = gameStateRef.current;
     if (!current.currentBid) return;
@@ -518,10 +517,10 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
 
     if (actualCount >= current.currentBid.quantity) {
        loserId = challengerId;
-       message = `抓錯了！場上有 ${actualCount} 個 ${DICE_LABELS[current.currentBid.face]}。${challenger?.name} 失去一顆骰子。`;
+       message = `抓錯了！場上有 ${actualCount} 個 ${DICE_LABELS[current.currentBid.face]}。${challenger?.name} 失去一顆${settingsState.gameMode === 'hearts' ? '愛心' : '骰子'}。`;
     } else {
        loserId = bidderId;
-       message = `抓到了！場上只有 ${actualCount} 個 ${DICE_LABELS[current.currentBid.face]}。${bidder?.name} 失去一顆骰子。`;
+       message = `抓到了！場上只有 ${actualCount} 個 ${DICE_LABELS[current.currentBid.face]}。${bidder?.name} 失去一顆${settingsState.gameMode === 'hearts' ? '愛心' : '骰子'}。`;
     }
 
     const result = { loserId, actualCount, bid: current.currentBid };
@@ -543,17 +542,27 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   };
 
   const resolveRound = (loserId: string) => {
-      // Use Ref to get latest players, as they might have changed (unlikely in this timeout but safe)
       const current = gameStateRef.current;
       
       const updatedPlayers = current.players.map(p => {
           if (p.id === loserId) {
-              const newCount = p.diceCount - 1;
-              return { 
-                  ...p, 
-                  diceCount: newCount,
-                  isEliminated: newCount <= 0
-              };
+              if (current.settings.gameMode === 'hearts') {
+                  // Hearts Mode
+                  const newHealth = p.health - 1;
+                  return {
+                      ...p,
+                      health: newHealth,
+                      isEliminated: newHealth <= 0
+                  };
+              } else {
+                  // Classic Mode
+                  const newCount = p.diceCount - 1;
+                  return { 
+                      ...p, 
+                      diceCount: newCount,
+                      isEliminated: newCount <= 0
+                  };
+              }
           }
           return p;
       });
@@ -561,9 +570,13 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
       const survivors = updatedPlayers.filter(p => !p.isEliminated);
       if (survivors.length === 1) {
           const winnerName = survivors[0].name;
+          // Identify the Loser (the one who just got eliminated to end the game)
+          const loserName = updatedPlayers.find(p => p.id === loserId)?.name || 'Unknown';
+          
           setPlayers(updatedPlayers);
           setPhase(GamePhase.GAME_OVER);
           setRoundWinner(winnerName);
+          setFinalLoser(loserName);
           const winLog = { id: Date.now().toString(), message: `遊戲結束！${winnerName} 獲勝！`, type: 'win' as const};
           setLogs(prev => [...prev, winLog]);
           
@@ -571,6 +584,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
               players: updatedPlayers,
               phase: GamePhase.GAME_OVER,
               roundWinner: winnerName,
+              finalLoser: loserName,
               logs: [...current.logs, winLog] 
           });
           return;
@@ -630,7 +644,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                               {p.isHost && <span className="text-xs bg-indigo-500 px-2 py-0.5 rounded text-white ml-auto">室長</span>}
                           </div>
                       ))}
-                      {/* Placeholders - Uses settingsState for accurate count */}
+                      {/* Placeholders */}
                       {Array.from({length: Math.max(0, settingsState.playerCount - players.length)}).map((_, i) => (
                           <div key={i} className="flex items-center gap-4 border border-dashed border-slate-600 p-3 rounded-lg opacity-50">
                               <div className="w-10 h-10 rounded-full bg-slate-700"></div>
@@ -661,16 +675,10 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
   // --- 2. Playing UI ---
   const activePlayer = players[currentPlayerIndex];
   const isMyTurn = activePlayer?.id === myId && phase === GamePhase.PLAYING;
-  
-  // Calculate relative rendering for Poker table
-  // Always put "Me" at bottom center
   const me = players.find(p => p.id === myId);
   const opponents = players.filter(p => p.id !== myId);
-  
-  // Check if I am spectating (not in players list but connected)
   const isSpectating = !me && phase === GamePhase.PLAYING;
 
-  // Helper to check if I can see dice
   const canSeeDice = (p: Player) => {
       if (phase === GamePhase.GAME_OVER) return true;
       if (p.id === myId) return true;
@@ -686,10 +694,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                <div className="bg-slate-800 p-8 rounded-2xl border border-rose-900/50 text-center max-w-md">
                    <div className="text-4xl mb-4">🚫</div>
                    <h2 className="text-xl font-bold text-white mb-2">無法加入遊戲</h2>
-                   <p className="text-slate-400 mb-6">
-                       遊戲已經開始，且您不在玩家清單中。
-                       <br/>可能是您使用了新的瀏覽器分頁，或室長未將您加入。
-                   </p>
+                   <p className="text-slate-400 mb-6">遊戲已經開始，且您不在玩家清單中。</p>
                    <Button onClick={onLeave}>返回大廳</Button>
                </div>
           </div>
@@ -719,10 +724,26 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                         `}
                     >
                         {/* Avatar */}
-                        <div className={`w-12 h-12 rounded-full mb-2 flex items-center justify-center font-bold text-lg shadow-lg ${AVATAR_COLORS[p.avatarSeed! % AVATAR_COLORS.length]}`}>
+                        <div className={`relative w-12 h-12 rounded-full mb-2 flex items-center justify-center font-bold text-lg shadow-lg ${AVATAR_COLORS[p.avatarSeed! % AVATAR_COLORS.length]}`}>
                             {p.name.charAt(0)}
+                            {/* Emote Display */}
+                            {activeEmotes[p.id] && (
+                                <div className="absolute -top-10 -right-4 text-4xl animate-bounce-in z-20 filter drop-shadow-lg">
+                                    {activeEmotes[p.id]}
+                                </div>
+                            )}
                         </div>
                         <div className="text-sm font-semibold mb-1">{p.name}</div>
+                        
+                        {/* Status (Hearts or Dice) */}
+                        {settingsState.gameMode === 'hearts' ? (
+                            <div className="flex gap-0.5 mb-1">
+                                {Array.from({length: p.maxHealth}).map((_, i) => (
+                                    <span key={i} className={`text-xs ${i < p.health ? 'text-rose-500' : 'text-slate-700'}`}>❤️</span>
+                                ))}
+                            </div>
+                        ) : null}
+
                         {/* Dice */}
                         <div className="flex gap-1 flex-wrap justify-center">
                             {p.dice.map((face, idx) => (
@@ -733,7 +754,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                                     size="sm"
                                 />
                             ))}
-                             {Array.from({length: p.diceCount - p.dice.length}).map((_, i) => (
+                             {settingsState.gameMode === 'classic' && Array.from({length: p.diceCount - p.dice.length}).map((_, i) => (
                                 <div key={`lost-${i}`} className="w-8 h-8 rounded border border-slate-700 bg-slate-800 opacity-50"></div>
                              ))}
                         </div>
@@ -746,7 +767,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                         )}
                          {challengeResult?.loserId === p.id && phase === GamePhase.ROUND_END && (
                              <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-rose-500 text-white text-xs px-2 py-1 rounded-full font-bold shadow whitespace-nowrap z-10 animate-bounce">
-                                輸了這局
+                                輸了!
                              </div>
                         )}
                     </div>
@@ -792,15 +813,57 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
             
             {/* My Player Area */}
             {me && (
-                 <div className={`mt-auto bg-slate-900 border-t border-slate-800 p-4 transition-colors duration-500 ${isMyTurn ? 'bg-indigo-950/30' : ''}`}>
+                 <div className={`mt-auto bg-slate-900 border-t border-slate-800 p-4 transition-colors duration-500 ${isMyTurn ? 'bg-indigo-950/30' : ''} relative`}>
+                     
+                     {/* Emote Button & Picker */}
+                     <div className="absolute top-[-50px] right-4">
+                        {showEmojiPicker && (
+                            <div className="absolute bottom-12 right-0 bg-slate-800 p-2 rounded-xl shadow-2xl border border-slate-700 grid grid-cols-4 gap-2 animate-fade-in-up">
+                                {EMOJI_LIST.map(emoji => (
+                                    <button 
+                                        key={emoji} 
+                                        className="text-2xl hover:scale-125 transition-transform p-1"
+                                        onClick={() => sendEmote(emoji)}
+                                    >
+                                        {emoji}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        <button 
+                            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                            className="bg-slate-800 hover:bg-slate-700 text-2xl w-10 h-10 rounded-full shadow-lg border border-slate-600 transition-colors"
+                        >
+                            😀
+                        </button>
+                     </div>
+
                      <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center gap-6">
                          
                          {/* My Hand */}
                          <div className="flex flex-col items-center">
-                             <div className="flex gap-2 mb-2">
-                                {me.dice.map((d, i) => <Dice key={i} value={d} size="md" />)}
+                             {/* My Emote Display */}
+                             <div className="relative">
+                                {activeEmotes[me.id] && (
+                                    <div className="absolute -top-12 left-1/2 -translate-x-1/2 text-4xl animate-bounce-in z-20">
+                                        {activeEmotes[me.id]}
+                                    </div>
+                                )}
+                                <div className="flex gap-2 mb-2">
+                                    {me.dice.map((d, i) => <Dice key={i} value={d} size="md" />)}
+                                </div>
                              </div>
-                             <div className="text-xs font-bold text-slate-500 uppercase">你的手牌 ({me.name})</div>
+                             
+                             <div className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
+                                 你的手牌 ({me.name})
+                                 {settingsState.gameMode === 'hearts' && (
+                                     <div className="flex gap-0.5 ml-2">
+                                        {Array.from({length: me.maxHealth}).map((_, i) => (
+                                            <span key={i} className={`text-sm ${i < me.health ? 'text-rose-500' : 'text-slate-700'}`}>❤️</span>
+                                        ))}
+                                     </div>
+                                 )}
+                             </div>
                          </div>
 
                          {/* Controls */}
@@ -880,12 +943,25 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
             
              {/* Game Over Modal */}
             {phase === GamePhase.GAME_OVER && (
-              <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
-                  <div className="bg-slate-800 p-8 rounded-2xl shadow-2xl text-center border border-slate-700 max-w-sm w-full animate-bounce-in">
-                      <h1 className="text-4xl font-bold text-white mb-4">遊戲結束</h1>
-                      <div className="text-6xl mb-4">👑</div>
-                      <p className="text-2xl text-indigo-400 mb-8">獲勝者：{roundWinner}</p>
-                      <Button onClick={onLeave} className="w-full">返回大廳</Button>
+              <div className="absolute inset-0 z-50 bg-black/90 flex items-center justify-center p-4 backdrop-blur-md">
+                  <div className="bg-slate-900 p-8 rounded-3xl shadow-2xl text-center border-2 border-slate-700 max-w-sm w-full animate-bounce-in relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
+                      
+                      {/* Winner Section */}
+                      <div className="mb-8">
+                          <h2 className="text-sm font-bold text-indigo-400 uppercase tracking-widest mb-2">Winner</h2>
+                          <div className="text-6xl mb-2">👑</div>
+                          <p className="text-3xl font-black text-white">{roundWinner}</p>
+                      </div>
+
+                      {/* Loser Section */}
+                      <div className="mb-8 p-4 bg-rose-950/30 rounded-xl border border-rose-900/50">
+                           <h2 className="text-xs font-bold text-rose-500 uppercase tracking-widest mb-1">Loser</h2>
+                           <div className="text-3xl mb-1">💀</div>
+                           <p className="text-xl font-bold text-rose-200">{finalLoser}</p>
+                      </div>
+
+                      <Button onClick={onLeave} className="w-full py-3 text-lg">返回大廳</Button>
                   </div>
               </div>
             )}

@@ -6,12 +6,16 @@ export enum GamePhase {
   GAME_OVER = 'GAME_OVER'
 }
 
+export type GameMode = 'classic' | 'hearts';
+
 export interface Player {
   id: string;
   name: string;
   isAi: boolean;
   dice: number[]; // Array of face values
   diceCount: number; // Current number of dice holding
+  health: number; // NEW: For Hearts mode
+  maxHealth: number; // NEW
   isEliminated: boolean;
   avatarSeed?: number;
   isHost?: boolean; // For multiplayer display
@@ -26,7 +30,7 @@ export interface Bid {
 export interface GameLog {
   id: string;
   message: string;
-  type: 'info' | 'bid' | 'challenge' | 'error' | 'win';
+  type: 'info' | 'bid' | 'challenge' | 'error' | 'win' | 'emote';
 }
 
 export interface GameSettings {
@@ -38,6 +42,9 @@ export interface GameSettings {
   mode: 'single' | 'multiplayer';
   roomId?: string; // If hosting or joining
   isHost?: boolean; // True if created the room
+  // NEW: Game Mode Settings
+  gameMode: GameMode;
+  maxHealth: number;
 }
 
 export interface AiMove {
@@ -53,6 +60,7 @@ export type NetworkAction =
   | { type: 'SYNC'; state: Partial<GameState> }
   | { type: 'BID'; quantity: number; face: number }
   | { type: 'CHALLENGE' }
+  | { type: 'EMOTE'; playerId: string; emoji: string } // NEW
   | { type: 'RESTART' };
 
 export interface GameState {
@@ -64,6 +72,7 @@ export interface GameState {
   phase: GamePhase;
   totalDiceInGame: number;
   roundWinner: string | null;
+  finalLoser: string | null; // NEW: Track the specific loser at game end
   challengeResult: {loserId: string, actualCount: number, bid: Bid} | null;
   settings: GameSettings; // Synced settings
 }

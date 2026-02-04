@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { GameSettings } from '../types';
-import { MAX_PLAYERS, MIN_PLAYERS, DEFAULT_STARTING_DICE } from '../constants';
+import { GameMode, GameSettings } from '../types';
+import { MAX_PLAYERS, MIN_PLAYERS, DEFAULT_STARTING_DICE, DEFAULT_MAX_HEALTH } from '../constants';
 import { Button } from '../components/Button';
 import { generateRoomId, getShareUrl, getSettingsFromUrl } from '../utils/gameUtils';
 
@@ -17,6 +17,11 @@ export const Lobby: React.FC<LobbyProps> = ({ onStartGame }) => {
   const [playerCount, setPlayerCount] = useState(3);
   const [diceCount, setDiceCount] = useState(DEFAULT_STARTING_DICE);
   const [difficulty, setDifficulty] = useState<'easy' | 'hard'>('easy');
+  
+  // NEW Settings
+  const [gameMode, setGameMode] = useState<GameMode>('classic');
+  const [maxHealth, setMaxHealth] = useState(DEFAULT_MAX_HEALTH);
+
   const [roomId, setRoomId] = useState('');
   
   // UI State
@@ -57,7 +62,9 @@ export const Lobby: React.FC<LobbyProps> = ({ onStartGame }) => {
       difficulty,
       mode,
       roomId: mode === 'multiplayer' ? roomId : undefined,
-      isHost: mode === 'single' ? true : !isGuest
+      isHost: mode === 'single' ? true : !isGuest,
+      gameMode,
+      maxHealth
     });
   };
 
@@ -133,6 +140,27 @@ export const Lobby: React.FC<LobbyProps> = ({ onStartGame }) => {
               {/* Guest Overlay blocker */}
               {isGuest && <div className="absolute inset-0 top-10 bg-slate-900/40 z-10 cursor-not-allowed backdrop-blur-[1px] rounded-lg border border-white/5"></div>}
 
+              {/* Game Mode Selection */}
+              <div className={`space-y-2 mb-4 transition-opacity ${isGuest ? 'opacity-50' : ''}`}>
+                 <label className="block text-sm font-medium text-slate-300">對戰規則</label>
+                 <div className="flex gap-2 bg-slate-900 p-1 rounded-lg">
+                    <button
+                      onClick={() => !isGuest && setGameMode('classic')}
+                      disabled={isGuest}
+                      className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${gameMode === 'classic' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                      經典 (扣骰子)
+                    </button>
+                    <button
+                      onClick={() => !isGuest && setGameMode('hearts')}
+                      disabled={isGuest}
+                      className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${gameMode === 'hearts' ? 'bg-rose-900/50 text-rose-300 shadow ring-1 ring-rose-800' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                      生命值 (扣愛心)
+                    </button>
+                 </div>
+              </div>
+
               {/* Player Count */}
               <div className={`space-y-2 mb-4 transition-opacity ${isGuest ? 'opacity-50' : ''}`}>
                 <div className="flex justify-between text-sm text-slate-300">
@@ -150,22 +178,41 @@ export const Lobby: React.FC<LobbyProps> = ({ onStartGame }) => {
                 />
               </div>
 
-              {/* Dice Count */}
-              <div className={`space-y-2 mb-4 transition-opacity ${isGuest ? 'opacity-50' : ''}`}>
-                 <div className="flex justify-between text-sm text-slate-300">
-                   <span>每人起始骰子數</span>
-                   <span className="font-bold text-indigo-400">{isGuest ? '?' : diceCount} 顆</span>
-                </div>
-                <input 
-                  type="range" 
-                  min={1} 
-                  max={6} 
-                  value={diceCount} 
-                  onChange={(e) => setDiceCount(Number(e.target.value))}
-                  disabled={isGuest}
-                  className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:cursor-not-allowed"
-                />
-              </div>
+              {/* Conditional Settings: Dice Count vs Health */}
+              {gameMode === 'classic' ? (
+                  <div className={`space-y-2 mb-4 transition-opacity ${isGuest ? 'opacity-50' : ''}`}>
+                     <div className="flex justify-between text-sm text-slate-300">
+                       <span>每人起始骰子數</span>
+                       <span className="font-bold text-indigo-400">{isGuest ? '?' : diceCount} 顆</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min={1} 
+                      max={6} 
+                      value={diceCount} 
+                      onChange={(e) => setDiceCount(Number(e.target.value))}
+                      disabled={isGuest}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:cursor-not-allowed"
+                    />
+                  </div>
+              ) : (
+                  <div className={`space-y-2 mb-4 transition-opacity ${isGuest ? 'opacity-50' : ''}`}>
+                     <div className="flex justify-between text-sm text-slate-300">
+                       <span>每人生命值 (愛心)</span>
+                       <span className="font-bold text-rose-400">{isGuest ? '?' : maxHealth} ❤️</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min={1} 
+                      max={10} 
+                      value={maxHealth} 
+                      onChange={(e) => setMaxHealth(Number(e.target.value))}
+                      disabled={isGuest}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-rose-500 disabled:cursor-not-allowed"
+                    />
+                    <p className="text-[10px] text-slate-500">此模式下，骰子數量固定為 5 顆，輸了扣愛心。</p>
+                  </div>
+              )}
 
               {/* Difficulty */}
               <div className={`space-y-2 transition-opacity ${isGuest ? 'opacity-50' : ''}`}>
