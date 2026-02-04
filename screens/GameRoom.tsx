@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { GameSettings, Player, Bid, GamePhase, GameLog, AiMove, NetworkAction, GameState } from '../types';
 import { rollDice, isValidBid, countDice } from '../utils/gameUtils';
@@ -14,8 +15,9 @@ interface GameRoomProps {
   onLeave: () => void;
 }
 
-export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
+export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, onLeave }) => {
   // --- Game State (Synced across network) ---
+  const [settingsState, setSettingsState] = useState<GameSettings>(initialSettings);
   const [players, setPlayers] = useState<Player[]>([]);
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
   const [currentBid, setCurrentBid] = useState<Bid | null>(null);
@@ -26,11 +28,33 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
   const [roundWinner, setRoundWinner] = useState<string | null>(null);
   const [challengeResult, setChallengeResult] = useState<{loserId: string, actualCount: number, bid: Bid} | null>(null);
 
+  // --- State Ref Pattern (Fix for Stale Closures in PeerJS) ---
+  // This ref always holds the latest state, accessible inside event listeners
+  const gameStateRef = useRef<GameState>({
+    players: [],
+    currentPlayerIndex: 0,
+    currentBid: null,
+    bidHistory: [],
+    logs: [],
+    phase: GamePhase.LOBBY,
+    totalDiceInGame: 0,
+    roundWinner: null,
+    challengeResult: null,
+    settings: initialSettings
+  });
+
+  // Sync state to ref whenever it changes
+  useEffect(() => {
+    gameStateRef.current = {
+      players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, challengeResult, settings: settingsState
+    };
+  }, [players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, challengeResult, settingsState]);
+
   // --- Local UI State ---
   const [selectedQuantity, setSelectedQuantity] = useState(1);
   const [selectedFace, setSelectedFace] = useState(2);
   const [isAiThinking, setIsAiThinking] = useState(false);
-  const [myId, setMyId] = useState<string>(settings.isHost ? 'host' : 'guest-temp');
+  const [myId, setMyId] = useState<string>(initialSettings.isHost ? 'host' : 'guest-temp');
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // --- Networking Refs ---
@@ -43,13 +67,13 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
   // ==========================================
   useEffect(() => {
     // 1. Initialize Player List (Locally for Host first)
-    if (settings.isHost) {
+    if (initialSettings.isHost) {
       const initialPlayer: Player = {
         id: 'host', // Host always has ID 'host' internally
-        name: settings.playerName,
+        name: initialSettings.playerName,
         isAi: false,
         dice: [],
-        diceCount: settings.startingDice,
+        diceCount: initialSettings.startingDice,
         isEliminated: false,
         avatarSeed: 0,
         isHost: true
@@ -57,7 +81,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
       setPlayers([initialPlayer]);
       setMyId('host');
       
-      if (settings.mode === 'single') {
+      if (initialSettings.mode === 'single') {
         // Single Player: Fill with AI immediately and start
         initSinglePlayerGame(initialPlayer);
       } else {
@@ -77,17 +101,20 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
 
   // --- Host Logic: Init Peer ---
   const initHostPeer = () => {
-    const peerId = `gemini-liar-${settings.roomId}`;
+    const peerId = `gemini-liar-${initialSettings.roomId}`;
     const peer = new Peer(peerId);
     peerRef.current = peer;
 
     peer.on('open', () => {
-      addLog(`房間已建立，代碼：${settings.roomId}。等待玩家加入...`);
+      addLog(`房間已建立，代碼：${initialSettings.roomId}。等待玩家加入...`);
     });
 
     peer.on('connection', (conn: any) => {
       conn.on('open', () => {
         connectionsRef.current.push(conn);
+        // Immediately sync current settings to the new guest
+        // We use setTimeout to ensure connection is fully ready
+        setTimeout(() => broadcastState(), 500);
       });
 
       conn.on('data', (data: NetworkAction) => {
@@ -95,7 +122,6 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
       });
 
       conn.on('close', () => {
-        // Handle disconnect (Simplified: just log)
         addLog('有玩家斷線', 'error');
       });
     });
@@ -103,7 +129,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
     peer.on('error', (err: any) => {
       console.error(err);
       if (err.type === 'unavailable-id') {
-         addLog('房間 ID 衝突，請重新建立', 'error');
+         addLog('房間 ID 衝突或尚未清理，請稍後再試或重新整理', 'error');
       } else {
          addLog(`連線錯誤: ${err.type}`, 'error');
       }
@@ -112,13 +138,25 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
 
   // --- Guest Logic: Init Peer ---
   const initGuestPeer = () => {
-    const peer = new Peer(); // Random ID for guest
+    // Attempt to recover previous session ID for reconnection
+    const savedId = sessionStorage.getItem('gemini-liar-guest-id');
+    
+    // If we have a savedId, try to use it. If not, PeerJS generates one.
+    let peer: any;
+    try {
+        peer = savedId ? new Peer(savedId) : new Peer();
+    } catch(e) {
+        peer = new Peer();
+    }
+
     peerRef.current = peer;
 
     peer.on('open', (id: string) => {
       setMyId(id);
+      sessionStorage.setItem('gemini-liar-guest-id', id); // Persist ID
+      
       addLog('正在連線至房間...');
-      const hostId = `gemini-liar-${settings.roomId}`;
+      const hostId = `gemini-liar-${initialSettings.roomId}`;
       const conn = peer.connect(hostId);
       
       conn.on('open', () => {
@@ -128,10 +166,10 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
         // Send Join Request
         const me: Player = {
           id: id,
-          name: settings.playerName,
+          name: initialSettings.playerName,
           isAi: false,
           dice: [],
-          diceCount: settings.startingDice,
+          diceCount: initialSettings.startingDice,
           isEliminated: false,
           avatarSeed: Math.floor(Math.random() * 100)
         };
@@ -146,40 +184,87 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
       
       conn.on('error', () => addLog('連線失敗', 'error'));
     });
+
+    peer.on('error', (err: any) => {
+        if (err.type === 'unavailable-id') {
+             // ID taken (maybe tab is still open?), retry with fresh ID
+             sessionStorage.removeItem('gemini-liar-guest-id');
+             peer.destroy();
+             // Simple recursive retry with fresh Peer
+             const newPeer = new Peer();
+             peerRef.current = newPeer;
+             // Re-bind listeners (simplified for brevity, ideally extract setup function)
+             initGuestPeer(); 
+        } else {
+            addLog(`連線錯誤: ${err.type}`, 'error');
+        }
+    });
   };
 
   // --- Host Logic: Handle Network Actions ---
   const handleNetworkAction = (action: NetworkAction) => {
-    if (!settings.isHost) return;
+    // CRITICAL: Read from Ref to get latest state
+    const currentState = gameStateRef.current;
+    if (!currentState.settings.isHost) return;
 
     switch (action.type) {
       case 'JOIN':
-        if (phase !== GamePhase.LOBBY) return; // Can't join mid-game
-        const newPlayer = action.player;
-        setPlayers(prev => {
-          const updated = [...prev, newPlayer];
-          // Broadcast update immediately to show in waiting room
-          broadcastState({ players: updated, logs: [...logs, {id: Date.now().toString(), message: `${newPlayer.name} 加入了房間`, type: 'info'}] });
-          return updated;
-        });
+        const existingPlayer = currentState.players.find(p => p.id === action.player.id);
+        
+        // Allow Reconnection if player exists, otherwise only join in Lobby
+        if (currentState.phase !== GamePhase.LOBBY && !existingPlayer) {
+            return; 
+        }
+
+        if (existingPlayer) {
+            // Reconnection logic: Just sync them up.
+            // We might want to update their name if they changed it, but ID matches.
+            broadcastState(); 
+        } else {
+            const newPlayer = action.player;
+            // Ensure we use the settings from Host for this new player (like start dice)
+            newPlayer.diceCount = currentState.settings.startingDice; 
+            
+            const updatedPlayers = [...currentState.players, newPlayer];
+            setPlayers(updatedPlayers);
+            // We need to update the log immediately in state for the broadcast to pick it up? 
+            // Better to just invoke broadcast with the new values.
+            const joinLog = {id: Date.now().toString(), message: `${newPlayer.name} 加入了房間`, type: 'info' as const};
+            setLogs(prev => [...prev, joinLog]);
+            
+            broadcastState({ 
+                players: updatedPlayers, 
+                logs: [...currentState.logs, joinLog] 
+            });
+        }
         break;
       case 'BID':
-        submitBid(players[currentPlayerIndex].id, action.quantity, action.face);
+        // Use current state to determine whose turn it is
+        submitBid(currentState.players[currentState.currentPlayerIndex].id, action.quantity, action.face);
         break;
       case 'CHALLENGE':
-        handleChallenge(players[currentPlayerIndex].id);
+        handleChallenge(currentState.players[currentState.currentPlayerIndex].id);
         break;
     }
   };
 
   // --- Host Logic: Broadcast State ---
   const broadcastState = (partialState?: Partial<GameState>) => {
-    if (!settings.isHost) return;
+    const currentState = gameStateRef.current;
+    if (!currentState.settings.isHost) return;
 
-    // Construct full current state (using latest values from ref or closure if needed, but state is usually fine here)
-    // We pass explicit partial state to ensure we send the *latest* calculated values before React render cycle
-    const stateToSend: Partial<GameState> = partialState || {
-        players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, challengeResult
+    const stateToSend: Partial<GameState> = {
+        players: currentState.players,
+        currentPlayerIndex: currentState.currentPlayerIndex,
+        currentBid: currentState.currentBid,
+        bidHistory: currentState.bidHistory,
+        logs: currentState.logs,
+        phase: currentState.phase,
+        totalDiceInGame: currentState.totalDiceInGame,
+        roundWinner: currentState.roundWinner,
+        challengeResult: currentState.challengeResult,
+        settings: currentState.settings, // Sync settings!
+        ...partialState
     };
 
     const payload = { type: 'SYNC', state: stateToSend };
@@ -200,6 +285,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
     if (newState.totalDiceInGame !== undefined) setTotalDiceInGame(newState.totalDiceInGame);
     if (newState.roundWinner !== undefined) setRoundWinner(newState.roundWinner);
     if (newState.challengeResult !== undefined) setChallengeResult(newState.challengeResult);
+    if (newState.settings) setSettingsState(newState.settings); // Sync Settings
   };
 
   // ==========================================
@@ -209,13 +295,13 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
   const initSinglePlayerGame = (humanPlayer: Player) => {
     const newPlayers = [humanPlayer];
     // Add AI
-    for (let i = 1; i < settings.playerCount; i++) {
+    for (let i = 1; i < initialSettings.playerCount; i++) {
       newPlayers.push({
         id: `ai-${i}`,
         name: `Gemini AI ${i}`,
         isAi: true,
         dice: [],
-        diceCount: settings.startingDice,
+        diceCount: initialSettings.startingDice,
         isEliminated: false,
         avatarSeed: i
       });
@@ -228,7 +314,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
     // Fill remaining spots with AI
     let currentPlayers = [...players];
     const humansCount = currentPlayers.length;
-    const needed = settings.playerCount - humansCount;
+    const needed = settingsState.playerCount - humansCount;
     
     for(let i=0; i < needed; i++) {
        currentPlayers.push({
@@ -236,7 +322,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
         name: `Bot ${i+1}`,
         isAi: true,
         dice: [],
-        diceCount: settings.startingDice,
+        diceCount: settingsState.startingDice,
         isEliminated: false,
         avatarSeed: 50 + i
       });
@@ -290,7 +376,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
 
   // --- AI Logic Hook (Host Only) ---
   useEffect(() => {
-    if (!settings.isHost) return;
+    if (!settingsState.isHost) return;
     const activePlayer = players[currentPlayerIndex];
     if (phase === GamePhase.PLAYING && activePlayer?.isAi && !isAiThinking) {
       handleAiTurn(activePlayer);
@@ -306,8 +392,6 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
   const addLog = (message: string, type: GameLog['type'] = 'info') => {
     const newLog: GameLog = { id: Date.now().toString(), message, type };
     setLogs(prev => [...prev, newLog]);
-    // If Guest, this is local log only? No, usually logs come from Host. 
-    // But for connection errors, we log locally.
   };
 
   const handleAiTurn = async (aiPlayer: Player) => {
@@ -315,17 +399,20 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
     // Broadcast thinking state? Optional, but we can simulate by holding state
     await new Promise(r => setTimeout(r, 1500));
 
+    // Use Refs inside async callback to ensure latest state
+    const current = gameStateRef.current;
+
     try {
       const move: AiMove = await getAiMove(
         aiPlayer,
-        currentBid,
-        totalDiceInGame,
-        bidHistory,
-        settings.difficulty
+        current.currentBid,
+        current.totalDiceInGame,
+        current.bidHistory,
+        settingsState.difficulty
       );
 
       if (move.action === 'BID' && move.quantity && move.face) {
-        if (isValidBid(currentBid, move.quantity, move.face)) {
+        if (isValidBid(current.currentBid, move.quantity, move.face)) {
             submitBid(aiPlayer.id, move.quantity, move.face);
         } else {
            handleChallenge(aiPlayer.id); // Fallback
@@ -342,19 +429,22 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
 
   const submitBid = (playerId: string, quantity: number, face: number) => {
     // Only Host updates state
-    if (!settings.isHost) {
+    if (!settingsState.isHost) {
         hostConnectionRef.current?.send({ type: 'BID', quantity, face });
         return;
     }
 
-    const newBid: Bid = { playerId, quantity, face };
-    const player = players.find(p => p.id === playerId);
-    const newLogs = [...logs, { id: Date.now().toString(), message: `${player?.name} 喊叫： ${quantity} 個 ${DICE_LABELS[face]}`, type: 'bid' as const }];
-    const newHistory = [...bidHistory, newBid];
+    // Always read from Ref in logic functions
+    const current = gameStateRef.current;
 
-    let nextIndex = (currentPlayerIndex + 1) % players.length;
-    while(players[nextIndex].isEliminated) {
-        nextIndex = (nextIndex + 1) % players.length;
+    const newBid: Bid = { playerId, quantity, face };
+    const player = current.players.find(p => p.id === playerId);
+    const newLogs = [...current.logs, { id: Date.now().toString(), message: `${player?.name} 喊叫： ${quantity} 個 ${DICE_LABELS[face]}`, type: 'bid' as const }];
+    const newHistory = [...current.bidHistory, newBid];
+
+    let nextIndex = (current.currentPlayerIndex + 1) % current.players.length;
+    while(current.players[nextIndex].isEliminated) {
+        nextIndex = (nextIndex + 1) % current.players.length;
     }
 
     // Update Local
@@ -386,30 +476,32 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
   };
 
   const handleChallenge = (challengerId: string) => {
-    if (!settings.isHost) {
+    if (!settingsState.isHost) {
         hostConnectionRef.current?.send({ type: 'CHALLENGE' });
         return;
     }
-    if (!currentBid) return;
 
-    const actualCount = countDice(players, currentBid.face);
-    const bidderId = currentBid.playerId;
-    const bidder = players.find(p => p.id === bidderId);
-    const challenger = players.find(p => p.id === challengerId);
+    const current = gameStateRef.current;
+    if (!current.currentBid) return;
+
+    const actualCount = countDice(current.players, current.currentBid.face);
+    const bidderId = current.currentBid.playerId;
+    const bidder = current.players.find(p => p.id === bidderId);
+    const challenger = current.players.find(p => p.id === challengerId);
 
     let loserId = '';
     let message = '';
 
-    if (actualCount >= currentBid.quantity) {
+    if (actualCount >= current.currentBid.quantity) {
        loserId = challengerId;
-       message = `抓錯了！場上有 ${actualCount} 個 ${DICE_LABELS[currentBid.face]}。${challenger?.name} 失去一顆骰子。`;
+       message = `抓錯了！場上有 ${actualCount} 個 ${DICE_LABELS[current.currentBid.face]}。${challenger?.name} 失去一顆骰子。`;
     } else {
        loserId = bidderId;
-       message = `抓到了！場上只有 ${actualCount} 個 ${DICE_LABELS[currentBid.face]}。${bidder?.name} 失去一顆骰子。`;
+       message = `抓到了！場上只有 ${actualCount} 個 ${DICE_LABELS[current.currentBid.face]}。${bidder?.name} 失去一顆骰子。`;
     }
 
-    const result = { loserId, actualCount, bid: currentBid };
-    const newLogs = [...logs, { id: Date.now().toString(), message, type: 'challenge' as const }]; // Correct type casting
+    const result = { loserId, actualCount, bid: current.currentBid };
+    const newLogs = [...current.logs, { id: Date.now().toString(), message, type: 'challenge' as const }];
 
     setPhase(GamePhase.ROUND_END);
     setChallengeResult(result);
@@ -427,7 +519,10 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
   };
 
   const resolveRound = (loserId: string) => {
-      const updatedPlayers = players.map(p => {
+      // Use Ref to get latest players, as they might have changed (unlikely in this timeout but safe)
+      const current = gameStateRef.current;
+      
+      const updatedPlayers = current.players.map(p => {
           if (p.id === loserId) {
               const newCount = p.diceCount - 1;
               return { 
@@ -452,7 +547,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
               players: updatedPlayers,
               phase: GamePhase.GAME_OVER,
               roundWinner: winnerName,
-              logs: [...logs, winLog] // Use current logs + new
+              logs: [...current.logs, winLog] 
           });
           return;
       }
@@ -478,7 +573,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
           <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
               <div className="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-md border border-slate-700">
                   <h2 className="text-2xl font-bold mb-6 text-center text-indigo-400">
-                      {settings.isHost ? '等待玩家加入...' : '已加入房間，等待室長開始'}
+                      {settingsState.isHost ? '等待玩家加入...' : '已加入房間，等待室長開始'}
                   </h2>
                   
                   <div className="space-y-4 mb-8">
@@ -491,25 +586,26 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
                               {p.isHost && <span className="text-xs bg-indigo-500 px-2 py-0.5 rounded text-white ml-auto">室長</span>}
                           </div>
                       ))}
-                      {/* Placeholders */}
-                      {Array.from({length: Math.max(0, settings.playerCount - players.length)}).map((_, i) => (
+                      {/* Placeholders - Uses settingsState for accurate count */}
+                      {Array.from({length: Math.max(0, settingsState.playerCount - players.length)}).map((_, i) => (
                           <div key={i} className="flex items-center gap-4 border border-dashed border-slate-600 p-3 rounded-lg opacity-50">
                               <div className="w-10 h-10 rounded-full bg-slate-700"></div>
-                              <span className="text-slate-500">等待加入... {settings.isHost ? '(或由 AI 遞補)' : ''}</span>
+                              <span className="text-slate-500">等待加入... {settingsState.isHost ? '(或由 AI 遞補)' : ''}</span>
                           </div>
                       ))}
                   </div>
 
-                  {settings.isHost ? (
+                  {settingsState.isHost ? (
                       <div className="flex flex-col gap-3">
                         <Button onClick={startMultiplayerGame} className="w-full py-3 text-lg">
-                            開始遊戲 ({players.length}/{settings.playerCount}人)
+                            開始遊戲 ({players.length}/{settingsState.playerCount}人)
                         </Button>
                         <p className="text-xs text-center text-slate-500">不足的人數將由 AI 遞補</p>
                       </div>
                   ) : (
                       <div className="text-center text-slate-400 animate-pulse">
                           室長正在準備遊戲...
+                          <br/><span className="text-xs text-slate-500 mt-2 block">如果斷線，請重新整理頁面即可重連</span>
                       </div>
                   )}
                    <Button variant="ghost" onClick={onLeave} className="w-full mt-4">離開房間</Button>
@@ -532,7 +628,6 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
       if (phase === GamePhase.GAME_OVER) return true;
       if (p.id === myId) return true;
       if (phase === GamePhase.ROUND_END && (challengeResult?.loserId === p.id || challengeResult?.bid.playerId === p.id)) {
-        // Technically standard rules reveal everything, or just involved players. Let's reveal all on round end for drama.
         return true; 
       }
       return false;
@@ -542,7 +637,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings, onLeave }) => {
     <div className="min-h-screen bg-slate-900 text-white flex flex-col overflow-hidden font-sans">
         {/* Header */}
         <div className="h-14 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-950">
-            <span className="font-bold text-indigo-400 tracking-wider">GEMINI 吹牛大王 {settings.mode === 'multiplayer' ? `(Room: ${settings.roomId})` : ''}</span>
+            <span className="font-bold text-indigo-400 tracking-wider">GEMINI 吹牛大王 {settingsState.mode === 'multiplayer' ? `(Room: ${settingsState.roomId})` : ''}</span>
             <Button variant="ghost" onClick={onLeave} className="text-xs">離開</Button>
         </div>
 

@@ -1,3 +1,4 @@
+
 export enum GamePhase {
   LOBBY = 'LOBBY',       // Waiting for players in multiplayer
   PLAYING = 'PLAYING',
@@ -64,4 +65,5 @@ export interface GameState {
   totalDiceInGame: number;
   roundWinner: string | null;
   challengeResult: {loserId: string, actualCount: number, bid: Bid} | null;
+  settings: GameSettings; // Synced settings
 }
