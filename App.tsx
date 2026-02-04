@@ -28,7 +28,7 @@ const App: React.FC = () => {
       
       {/* Version Footer */}
       <div className="fixed bottom-1 right-2 text-[10px] text-slate-600 font-mono pointer-events-none z-50 opacity-60">
-        v1.1.0
+        v1.1.2
       </div>
     </div>
   );

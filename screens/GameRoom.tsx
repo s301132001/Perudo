@@ -816,13 +816,13 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                  <div className={`mt-auto bg-slate-900 border-t border-slate-800 p-4 transition-colors duration-500 ${isMyTurn ? 'bg-indigo-950/30' : ''} relative`}>
                      
                      {/* Emote Button & Picker */}
-                     <div className="absolute top-[-50px] right-4">
+                     <div className="absolute top-[-60px] right-4 z-40">
                         {showEmojiPicker && (
-                            <div className="absolute bottom-12 right-0 bg-slate-800 p-2 rounded-xl shadow-2xl border border-slate-700 grid grid-cols-4 gap-2 animate-fade-in-up">
+                            <div className="absolute bottom-16 right-0 bg-slate-800 p-4 rounded-2xl shadow-2xl border border-slate-600 grid grid-cols-4 gap-4 animate-fade-in-up w-max z-50">
                                 {EMOJI_LIST.map(emoji => (
                                     <button 
                                         key={emoji} 
-                                        className="text-2xl hover:scale-125 transition-transform p-1"
+                                        className="text-3xl hover:scale-125 transition-transform p-2 bg-slate-700/50 rounded-lg hover:bg-slate-600"
                                         onClick={() => sendEmote(emoji)}
                                     >
                                         {emoji}
@@ -832,7 +832,7 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
                         )}
                         <button 
                             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                            className="bg-slate-800 hover:bg-slate-700 text-2xl w-10 h-10 rounded-full shadow-lg border border-slate-600 transition-colors"
+                            className="bg-slate-800 hover:bg-slate-700 text-3xl w-12 h-12 rounded-full shadow-lg border border-slate-600 transition-colors flex items-center justify-center"
                         >
                             😀
                         </button>
@@ -944,24 +944,36 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
              {/* Game Over Modal */}
             {phase === GamePhase.GAME_OVER && (
               <div className="absolute inset-0 z-50 bg-black/90 flex items-center justify-center p-4 backdrop-blur-md">
-                  <div className="bg-slate-900 p-8 rounded-3xl shadow-2xl text-center border-2 border-slate-700 max-w-sm w-full animate-bounce-in relative overflow-hidden">
+                  <div className="bg-slate-900 p-10 rounded-3xl shadow-2xl text-center border-2 border-slate-700 max-w-md w-full animate-bounce-in relative overflow-hidden">
+                      {/* Define Custom Animation within the component scope */}
+                      <style>{`
+                        @keyframes grow-pulse {
+                            0% { transform: scale(1); }
+                            50% { transform: scale(1.1); }
+                            100% { transform: scale(1); }
+                        }
+                        .animate-grow {
+                            animation: grow-pulse 1.5s infinite ease-in-out;
+                        }
+                      `}</style>
+
                       <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
                       
                       {/* Winner Section */}
-                      <div className="mb-8">
-                          <h2 className="text-sm font-bold text-indigo-400 uppercase tracking-widest mb-2">Winner</h2>
-                          <div className="text-6xl mb-2">👑</div>
-                          <p className="text-3xl font-black text-white">{roundWinner}</p>
+                      <div className="mb-10">
+                          <h2 className="text-4xl md:text-5xl font-black text-indigo-400 uppercase tracking-[0.2em] mb-4 drop-shadow-md">Winner</h2>
+                          <div className="text-8xl mb-4 drop-shadow-lg">👑</div>
+                          <p className="text-6xl font-black text-white drop-shadow-[0_0_15px_rgba(99,102,241,0.5)]">{roundWinner}</p>
                       </div>
 
                       {/* Loser Section */}
-                      <div className="mb-8 p-4 bg-rose-950/30 rounded-xl border border-rose-900/50">
-                           <h2 className="text-xs font-bold text-rose-500 uppercase tracking-widest mb-1">Loser</h2>
-                           <div className="text-3xl mb-1">💀</div>
-                           <p className="text-xl font-bold text-rose-200">{finalLoser}</p>
+                      <div className="mb-10 p-6 bg-rose-950/40 rounded-2xl border-2 border-rose-900/50">
+                           <h2 className="text-4xl md:text-5xl font-black text-rose-500 uppercase tracking-[0.2em] mb-2 animate-grow drop-shadow-md">Loser</h2>
+                           <div className="text-5xl mb-2 grayscale opacity-80">💀</div>
+                           <p className="text-4xl font-bold text-rose-200">{finalLoser}</p>
                       </div>
 
-                      <Button onClick={onLeave} className="w-full py-3 text-lg">返回大廳</Button>
+                      <Button onClick={onLeave} className="w-full py-4 text-xl font-bold">返回大廳</Button>
                   </div>
               </div>
             )}
