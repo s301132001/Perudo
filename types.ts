@@ -7,18 +7,34 @@ export enum GamePhase {
 }
 
 export type GameMode = 'classic' | 'hearts';
+export type GameType = 'liar' | 'rummikub'; 
+export type RummikubVersion = 'standard' | 'face-change'; // Updated from 'deluxe'
+
+// --- Rummikub Specific Types ---
+export type TileColor = 'red' | 'blue' | 'orange' | 'black';
+
+export interface Tile {
+  id: string;
+  value: number; // 1-13
+  color: TileColor;
+  isJoker: boolean;
+}
 
 export interface Player {
   id: string;
   name: string;
   isAi: boolean;
-  dice: number[]; // Array of face values
-  diceCount: number; // Current number of dice holding
-  health: number; // NEW: For Hearts mode
-  maxHealth: number; // NEW
+  // Liar Data
+  dice: number[]; 
+  diceCount: number; 
+  health: number; 
+  maxHealth: number; 
+  // Rummikub Data
+  hand: Tile[]; 
+  hasInitialMeld: boolean; // NEW: Track if player has broken the ice (30 points)
   isEliminated: boolean;
   avatarSeed?: number;
-  isHost?: boolean; // For multiplayer display
+  isHost?: boolean; 
 }
 
 export interface Bid {
@@ -34,17 +50,22 @@ export interface GameLog {
 }
 
 export interface GameSettings {
-  playerCount: number; // Total players including human and AI
-  startingDice: number;
+  // Common Props
+  gameType: GameType; 
+  playerCount: number; 
   playerName: string;
   difficulty: 'easy' | 'hard';
-  // Multiplayer Props
   mode: 'single' | 'multiplayer';
-  roomId?: string; // If hosting or joining
-  isHost?: boolean; // True if created the room
-  // NEW: Game Mode Settings
+  roomId?: string; 
+  isHost?: boolean; 
+  
+  // Liar's Dice Specific
+  startingDice: number;
   gameMode: GameMode;
   maxHealth: number;
+
+  // Rummikub Specific
+  rummikubVersion: RummikubVersion; 
 }
 
 export interface AiMove {
@@ -60,8 +81,12 @@ export type NetworkAction =
   | { type: 'SYNC'; state: Partial<GameState> }
   | { type: 'BID'; quantity: number; face: number }
   | { type: 'CHALLENGE' }
-  | { type: 'EMOTE'; playerId: string; emoji: string } // NEW
-  | { type: 'CHAT'; playerId: string; message: string } // NEW
+  | { type: 'EMOTE'; playerId: string; emoji: string }
+  | { type: 'CHAT'; playerId: string; message: string }
+  // Rummikub Actions Updated
+  | { type: 'RUMMIKUB_UPDATE_BOARD'; boardSets: Tile[][]; hand: Tile[] } // Final Commit: Send valid board + new hand state
+  | { type: 'RUMMIKUB_SYNC_WORKING'; workingGrid: (Tile | null)[] } // NEW: Real-time visual sync of moves
+  | { type: 'RUMMIKUB_DRAW' }
   | { type: 'RESTART' };
 
 export interface GameState {
@@ -73,7 +98,10 @@ export interface GameState {
   phase: GamePhase;
   totalDiceInGame: number;
   roundWinner: string | null;
-  finalLoser: string | null; // NEW: Track the specific loser at game end
+  finalLoser: string | null;
   challengeResult: {loserId: string, actualCount: number, bid: Bid} | null;
-  settings: GameSettings; // Synced settings
+  settings: GameSettings;
+  // Rummikub State
+  boardSets: Tile[][]; // Array of sets (runs or groups)
+  tilePoolCount: number; // Number of tiles remaining in deck
 }

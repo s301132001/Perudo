@@ -41,13 +41,17 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     roundWinner: null,
     finalLoser: null,
     challengeResult: null,
-    settings: initialSettings
+    settings: initialSettings,
+    boardSets: [],
+    tilePoolCount: 0
   });
 
   // Sync state to ref whenever it changes
   useEffect(() => {
     gameStateRef.current = {
-      players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, finalLoser, challengeResult, settings: settingsState
+      players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, finalLoser, challengeResult, settings: settingsState,
+      boardSets: [],
+      tilePoolCount: 0
     };
   }, [players, currentPlayerIndex, currentBid, bidHistory, logs, phase, totalDiceInGame, roundWinner, finalLoser, challengeResult, settingsState]);
 
@@ -82,7 +86,9 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         maxHealth: initialSettings.maxHealth,
         isEliminated: false,
         avatarSeed: 0,
-        isHost: true
+        isHost: true,
+        hand: [],
+        hasInitialMeld: false
       };
       setPlayers([initialPlayer]);
       setMyId('host');
@@ -166,7 +172,9 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
           health: initialSettings.maxHealth, // Will be overwritten by sync
           maxHealth: initialSettings.maxHealth,
           isEliminated: false,
-          avatarSeed: Math.floor(Math.random() * 100)
+          avatarSeed: Math.floor(Math.random() * 100),
+          hand: [],
+          hasInitialMeld: false
         };
         conn.send({ type: 'JOIN', player: me });
       });
@@ -309,7 +317,9 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         health: initialSettings.maxHealth,
         maxHealth: initialSettings.maxHealth,
         isEliminated: false,
-        avatarSeed: i
+        avatarSeed: i,
+        hand: [],
+        hasInitialMeld: false
       });
     }
     setPlayers(newPlayers);
@@ -334,7 +344,9 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
         health: settingsState.maxHealth,
         maxHealth: settingsState.maxHealth,
         isEliminated: false,
-        avatarSeed: 50 + i
+        avatarSeed: 50 + i,
+        hand: [],
+        hasInitialMeld: false
       });
     }
     setPlayers(currentPlayers);
@@ -1106,3 +1118,4 @@ export const GameRoom: React.FC<GameRoomProps> = ({ settings: initialSettings, o
     </div>
   );
 };
+    

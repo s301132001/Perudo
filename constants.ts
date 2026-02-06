@@ -5,7 +5,11 @@ export const MIN_PLAYERS = 2;
 export const DEFAULT_STARTING_DICE = 5;
 export const DEFAULT_MAX_HEALTH = 3;
 
-// Visual mapping for dice faces (can use unicode or svgs later, simple numbers for now)
+// Rummikub Constants
+export const TILE_COLORS: ('red' | 'blue' | 'orange' | 'black')[] = ['red', 'blue', 'orange', 'black'];
+export const MIN_SET_LENGTH = 3;
+
+// Visual mapping for dice faces
 export const DICE_LABELS: Record<number, string> = {
   1: '⚀',
   2: '⚁',

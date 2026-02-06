@@ -1,4 +1,5 @@
-import { Bid, Player } from '../types';
+
+import { Bid, Player, GameType } from '../types';
 
 export const rollDice = (count: number): number[] => {
   return Array.from({ length: count }, () => Math.floor(Math.random() * 6) + 1);
@@ -35,12 +36,12 @@ export const generateRoomId = () => {
   return result;
 };
 
-// Generate Share URL with Room ID
-// Updated to support subdirectories (e.g. GitHub Pages) by strictly using the current location
-export const getShareUrl = (roomId: string) => {
+// Generate Share URL with Room ID and Game Type
+export const getShareUrl = (roomId: string, gameType: GameType = 'liar') => {
   const url = new URL(window.location.href);
   url.search = ''; // Clear existing search params if any
   url.searchParams.set('room', roomId);
+  url.searchParams.set('game', gameType);
   return url.toString();
 };
 
@@ -48,11 +49,13 @@ export const getShareUrl = (roomId: string) => {
 export const getSettingsFromUrl = () => {
   const params = new URLSearchParams(window.location.search);
   const roomId = params.get('room');
+  const gameType = (params.get('game') as GameType) || 'liar';
   
   if (!roomId) return null;
 
   return {
     roomId,
+    gameType,
     isGuest: true
   };
 };
